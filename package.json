@@ -11,7 +11,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@vibearound/plugin-channel-sdk": "file:../channel-sdk",
+    "@vibearound/plugin-channel-sdk": "^0.1.1",
     "discord.js": "^14.18.0"
   },
   "devDependencies": {
