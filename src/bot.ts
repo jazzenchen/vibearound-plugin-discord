@@ -182,8 +182,9 @@ export class DiscordBot {
       this.log("info", `prompt done channel=${channelId} stopReason=${response.stopReason}`);
       await this.streamHandler?.onTurnEnd(channelId);
     } catch (error: unknown) {
-      this.log("error", `prompt failed channel=${channelId}: ${error}`);
-      await this.streamHandler?.onTurnError(channelId, String(error));
+      const msg = error instanceof Error ? error.message : String(error);
+      this.log("error", `prompt failed channel=${channelId}: ${msg}`);
+      await this.streamHandler?.onTurnError(channelId, msg);
     } finally {
       clearInterval(typingInterval);
     }
