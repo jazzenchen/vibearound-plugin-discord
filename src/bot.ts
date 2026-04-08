@@ -51,6 +51,16 @@ export class DiscordBot {
     this.streamHandler = handler;
   }
 
+  /**
+   * Start the bot. No-op for Discord — the constructor eagerly calls
+   * `client.login()`, so the gateway connection is already in flight by
+   * the time the SDK runner calls this. Exists purely to satisfy the
+   * `ChannelBot` interface contract used by `runChannelPlugin`.
+   */
+  async start(): Promise<void> {
+    // Intentionally empty.
+  }
+
   /** Probe bot identity. */
   async probe(): Promise<{ id: string; username: string }> {
     // Wait for the client to be ready
