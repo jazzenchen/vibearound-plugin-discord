@@ -7,11 +7,14 @@
  *   - Message send/edit for streaming responses
  */
 
+import fs from "node:fs/promises";
 import path from "node:path";
 import {
+  type Attachment,
   Client,
   Events,
   GatewayIntentBits,
+  Partials,
   type Message,
   type TextBasedChannel,
 } from "discord.js";
@@ -41,6 +44,11 @@ export class DiscordBot {
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
       ],
+      // DM channels are not cached on startup, so without Partials.Channel
+      // discord.js silently drops MessageCreate events that arrive for a
+      // DM we haven't seen before. Partials.Message covers the rare case
+      // where the inbound message itself is a partial.
+      partials: [Partials.Channel, Partials.Message],
     });
 
     this.registerHandlers();
@@ -155,14 +163,32 @@ export class DiscordBot {
       contentBlocks.push({ type: "text", text });
     }
 
-    // Handle attachments (images, files)
+    // Handle attachments (images, files).
+    //
+    // Discord CDN URLs (cdn.discordapp.com / media.discordapp.net) now ship
+    // with signed, expiring query parameters. Claude Agent's fetch tool
+    // can't reliably pull them — and for images we want them inlined as a
+    // local file anyway so the ACPPod relocate step can drop them into the
+    // workspace cache, matching how feishu handles media. Download here.
     for (const [, attachment] of message.attachments) {
+      const localPath = await this.downloadAttachment(message.channelId, attachment).catch(
+        (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.log("warn", `failed to download attachment ${attachment.url}: ${msg}`);
+          return null;
+        },
+      );
+      if (!localPath) continue;
+
       if (!text) {
-        contentBlocks.push({ type: "text", text: `The user sent a file: ${attachment.name ?? "unknown"}` });
+        contentBlocks.push({
+          type: "text",
+          text: `The user sent a file: ${attachment.name ?? "unknown"}`,
+        });
       }
       contentBlocks.push({
         type: "resource_link",
-        uri: attachment.url,
+        uri: `file://${localPath}`,
         name: attachment.name ?? "attachment",
         mimeType: attachment.contentType ?? "application/octet-stream",
       });
@@ -198,5 +224,46 @@ export class DiscordBot {
     } finally {
       clearInterval(typingInterval);
     }
+  }
+
+  /**
+   * Download a Discord attachment into the plugin cache directory and
+   * return the local file path. Cached by attachment id so repeated
+   * prompts referring to the same file don't re-download.
+   */
+  private async downloadAttachment(
+    channelId: string,
+    attachment: Attachment,
+  ): Promise<string> {
+    const ext = attachment.name && attachment.name.includes(".")
+      ? `.${attachment.name.split(".").pop()}`
+      : "";
+    const dir = path.join(this.cacheDir, "discord", channelId);
+    const localPath = path.join(dir, `${attachment.id}${ext}`);
+
+    try {
+      await fs.access(localPath);
+      this.log("debug", `attachment cache hit: ${localPath}`);
+      return localPath;
+    } catch {
+      // not cached, fall through to download
+    }
+
+    this.log(
+      "debug",
+      `downloading attachment id=${attachment.id} url=${attachment.url}`,
+    );
+    const res = await fetch(attachment.url);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} fetching attachment`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(localPath, buf);
+    this.log(
+      "debug",
+      `cached attachment ${buf.length} bytes → ${localPath}`,
+    );
+    return localPath;
   }
 }
