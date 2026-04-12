@@ -1,12 +1,9 @@
 /**
- * AgentStreamHandler — receives ACP session updates from the Host and renders
- * them as separate Discord messages, one per contiguous variant block.
+ * Discord stream renderer — extends BlockRenderer with Discord-specific transport.
  *
- * Extends BlockRenderer from @vibearound/plugin-channel-sdk which handles:
- *   - Block accumulation and kind-change detection
- *   - Debounced flushing + edit throttling (1000ms for Discord's rate limit)
- *   - Serialized sendChain for guaranteed message order
- *   - Verbose filtering (thinking / tool blocks)
+ * Only implements sendText/sendBlock/editBlock + formatContent.
+ * Everything else (block accumulation, notifications, chatId tracking)
+ * is handled by BlockRenderer in the SDK.
  */
 
 import {
@@ -16,23 +13,15 @@ import {
 } from "@vibearound/plugin-channel-sdk";
 import type { DiscordBot } from "./bot.js";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type LogFn = (level: string, msg: string) => void;
-
-// ---------------------------------------------------------------------------
-// AgentStreamHandler
-// ---------------------------------------------------------------------------
 
 export class AgentStreamHandler extends BlockRenderer<string> {
   private discordBot: DiscordBot;
   private log: LogFn;
-  private lastActiveChannelId: string | null = null;
 
   constructor(discordBot: DiscordBot, log: LogFn, verbose?: Partial<VerboseConfig>) {
     super({
+      streaming: true,
       flushIntervalMs: 500,
       minEditIntervalMs: 1000,
       verbose,
@@ -41,80 +30,30 @@ export class AgentStreamHandler extends BlockRenderer<string> {
     this.log = log;
   }
 
-  // ---- BlockRenderer overrides ----
-
-  /** Discord uses plain text with emoji prefixes. */
-  protected formatContent(kind: BlockKind, content: string, _sealed: boolean): string {
-    switch (kind) {
-      case "thinking": return `💭 ${content}`;
-      case "tool":     return content.trim();
-      case "text":     return content;
-    }
+  protected async sendText(chatId: string, text: string): Promise<void> {
+    await this.discordBot.sendMessage(chatId, text);
   }
 
-  /** Send new message to Discord channel. */
-  protected async sendBlock(channelId: string, _kind: BlockKind, content: string): Promise<string | null> {
+  protected async sendBlock(chatId: string, _kind: BlockKind, content: string): Promise<string | null> {
     try {
-      const messageId = await this.discordBot.sendMessage(channelId, content);
-      return messageId;
+      return await this.discordBot.sendMessage(chatId, content);
     } catch (e) {
       this.log("error", `sendBlock failed: ${e}`);
       return null;
     }
   }
 
-  /** Edit existing message for streaming updates. */
   protected async editBlock(
-    channelId: string,
+    chatId: string,
     ref: string,
     _kind: BlockKind,
     content: string,
     _sealed: boolean,
   ): Promise<void> {
     try {
-      await this.discordBot.editMessage(channelId, ref, content);
+      await this.discordBot.editMessage(chatId, ref, content);
     } catch (e) {
       this.log("error", `editBlock failed: ${e}`);
-    }
-  }
-
-  /** Cleanup after turn completes. */
-  protected async onAfterTurnEnd(channelId: string): Promise<void> {
-    this.log("debug", `turn_complete channel=${channelId}`);
-  }
-
-  /** Send error message to user. */
-  protected async onAfterTurnError(channelId: string, error: string): Promise<void> {
-    this.discordBot.sendMessage(channelId, `❌ Error: ${error}`).catch(() => {});
-  }
-
-  // ---- Prompt lifecycle ----
-
-  onPromptSent(channelId: string): void {
-    this.lastActiveChannelId = channelId;
-    super.onPromptSent(channelId);
-  }
-
-  // ---- Host ext notification handlers ----
-
-  onAgentReady(agent: string, version: string): void {
-    const channelId = this.lastActiveChannelId;
-    if (channelId) {
-      this.discordBot.sendMessage(channelId, `🤖 Agent: ${agent} v${version}`).catch(() => {});
-    }
-  }
-
-  onSessionReady(sessionId: string): void {
-    const channelId = this.lastActiveChannelId;
-    if (channelId) {
-      this.discordBot.sendMessage(channelId, `📋 Session: ${sessionId}`).catch(() => {});
-    }
-  }
-
-  onSystemText(text: string): void {
-    const channelId = this.lastActiveChannelId;
-    if (channelId) {
-      this.discordBot.sendMessage(channelId, text).catch(() => {});
     }
   }
 }
