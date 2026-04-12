@@ -89,10 +89,10 @@ export class DiscordBot {
   }
 
   /** Send a message to a channel. Returns the message ID. */
-  async sendMessage(channelId: string, content: string): Promise<string> {
-    const channel = await this.client.channels.fetch(channelId) as TextBasedChannel | null;
+  async sendMessage(chatId: string, content: string): Promise<string> {
+    const channel = await this.client.channels.fetch(chatId) as TextBasedChannel | null;
     if (!channel || !("send" in channel)) {
-      throw new Error(`Channel ${channelId} not found or not text-based`);
+      throw new Error(`Channel ${chatId} not found or not text-based`);
     }
     // Discord has a 2000 char limit — truncate if needed
     const truncated = content.length > 2000 ? content.slice(0, 1997) + "..." : content;
@@ -102,7 +102,7 @@ export class DiscordBot {
   }
 
   /** Edit an existing message. */
-  async editMessage(channelId: string, messageId: string, content: string): Promise<void> {
+  async editMessage(chatId: string, messageId: string, content: string): Promise<void> {
     const truncated = content.length > 2000 ? content.slice(0, 1997) + "..." : content;
     const cached = this.messageCache.get(messageId);
     if (cached) {
@@ -110,7 +110,7 @@ export class DiscordBot {
       return;
     }
     // Fallback: fetch channel and message
-    const channel = await this.client.channels.fetch(channelId) as TextBasedChannel | null;
+    const channel = await this.client.channels.fetch(chatId) as TextBasedChannel | null;
     if (!channel || !("messages" in channel)) return;
     const msg = await channel.messages.fetch(messageId);
     await msg.edit(truncated);
@@ -145,7 +145,7 @@ export class DiscordBot {
     const isMentioned = message.mentions.has(this.client.user!);
     if (!isDM && !isMentioned) return;
 
-    const channelId = message.channelId;
+    const chatId = message.channelId;
     // Strip the @mention from the text so the agent sees clean input
     let text = message.content;
     if (isMentioned && this.client.user) {
@@ -154,7 +154,7 @@ export class DiscordBot {
 
     if (!text && message.attachments.size === 0) return;
 
-    this.log("debug", `message channel=${channelId} text=${(text ?? "").slice(0, 80)}`);
+    this.log("debug", `message channel=${chatId} text=${(text ?? "").slice(0, 80)}`);
 
     // Build content blocks
     const contentBlocks: ContentBlock[] = [];
@@ -208,19 +208,19 @@ export class DiscordBot {
     }, 8000); // Discord typing expires after 10s
 
     // Notify stream handler before prompt
-    this.streamHandler?.onPromptSent(channelId);
+    this.streamHandler?.onPromptSent(chatId);
 
     try {
       const response = await this.agent.prompt({
-        sessionId: channelId,
+        sessionId: chatId,
         prompt: contentBlocks,
       });
-      this.log("info", `prompt done channel=${channelId} stopReason=${response.stopReason}`);
-      await this.streamHandler?.onTurnEnd(channelId);
+      this.log("info", `prompt done channel=${chatId} stopReason=${response.stopReason}`);
+      await this.streamHandler?.onTurnEnd(chatId);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.log("error", `prompt failed channel=${channelId}: ${msg}`);
-      await this.streamHandler?.onTurnError(channelId, msg);
+      this.log("error", `prompt failed channel=${chatId}: ${msg}`);
+      await this.streamHandler?.onTurnError(chatId, msg);
     } finally {
       clearInterval(typingInterval);
     }
@@ -232,13 +232,13 @@ export class DiscordBot {
    * prompts referring to the same file don't re-download.
    */
   private async downloadAttachment(
-    channelId: string,
+    chatId: string,
     attachment: Attachment,
   ): Promise<string> {
     const ext = attachment.name && attachment.name.includes(".")
       ? `.${attachment.name.split(".").pop()}`
       : "";
-    const dir = path.join(this.cacheDir, "discord", channelId);
+    const dir = path.join(this.cacheDir, "discord", chatId);
     const localPath = path.join(dir, `${attachment.id}${ext}`);
 
     try {
