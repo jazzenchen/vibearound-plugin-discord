@@ -21,6 +21,6 @@ runChannelPlugin({
     const botInfo = await bot.probe();
     log("info", `bot identity: @${botInfo.username} (${botInfo.id})`);
   },
-  createStreamHandler: (bot, log, verbose) =>
+  createRenderer: (bot, log, verbose) =>
     new AgentStreamHandler(bot, log, verbose),
 });
