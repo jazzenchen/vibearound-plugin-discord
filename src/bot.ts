@@ -10,10 +10,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
+  ActionRowBuilder,
   type Attachment,
+  ButtonBuilder,
+  type ButtonInteraction,
+  ButtonStyle,
   Client,
   Events,
   GatewayIntentBits,
+  type Interaction,
   Partials,
   type Message,
   type TextBasedChannel,
@@ -101,6 +106,28 @@ export class DiscordBot {
     return msg.id;
   }
 
+  /** Send a message with a row of buttons. Used by permission UI. */
+  async sendButtons(
+    chatId: string,
+    content: string,
+    buttons: { customId: string; label: string; style: "primary" | "danger" | "secondary" }[],
+  ): Promise<string> {
+    const channel = await this.client.channels.fetch(chatId) as TextBasedChannel | null;
+    if (!channel || !("send" in channel)) {
+      throw new Error(`Channel ${chatId} not found or not text-based`);
+    }
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      buttons.map((b) =>
+        new ButtonBuilder()
+          .setCustomId(b.customId.slice(0, 100))
+          .setLabel(b.label.slice(0, 80))
+          .setStyle(buttonStyleToEnum(b.style)),
+      ),
+    );
+    const msg = await channel.send({ content, components: [row] });
+    return msg.id;
+  }
+
   /** Edit an existing message. */
   async editMessage(chatId: string, messageId: string, content: string): Promise<void> {
     const truncated = content.length > 2000 ? content.slice(0, 1997) + "..." : content;
@@ -129,9 +156,47 @@ export class DiscordBot {
       this.handleMessage(message);
     });
 
+    this.client.on(Events.InteractionCreate, (interaction) => {
+      this.handleInteraction(interaction);
+    });
+
     this.client.on(Events.Error, (error) => {
       this.log("error", `client error: ${error.message}`);
     });
+  }
+
+  private async handleInteraction(interaction: Interaction): Promise<void> {
+    if (!interaction.isButton()) return;
+    const btn = interaction as ButtonInteraction;
+    const id = btn.customId;
+    if (!id.startsWith("va_perm:")) return;
+
+    const rest = id.slice("va_perm:".length);
+    const colon = rest.indexOf(":");
+    if (colon <= 0) return;
+    const callbackId = rest.slice(0, colon);
+    const optionId = rest.slice(colon + 1);
+
+    const ok =
+      this.streamHandler?.resolvePermission(callbackId, optionId) ?? false;
+    this.log(
+      "info",
+      `permission resolve cb=${callbackId} option=${optionId} ok=${ok}`,
+    );
+    // Recover the human label from the pressed button. Discord.js types include
+    // SKU buttons which have no label — narrow with a defensive access.
+    const optionName =
+      (btn.component as { label?: string | null } | undefined)?.label ?? optionId;
+    try {
+      await btn.update({
+        content: ok
+          ? `🔐 Permission — selected: **${optionName}**`
+          : `🔐 Permission — already handled`,
+        components: [],
+      });
+    } catch (e) {
+      this.log("error", `permission ack failed: ${e}`);
+    }
   }
 
   private async handleMessage(message: Message): Promise<void> {
@@ -195,6 +260,11 @@ export class DiscordBot {
     }
 
     if (contentBlocks.length === 0) return;
+
+    // If a permission prompt is awaiting text, consume this message.
+    if (text && this.streamHandler?.consumePendingText(chatId, text)) {
+      return;
+    }
 
     // Show typing indicator
     const channel = message.channel;
@@ -265,5 +335,13 @@ export class DiscordBot {
       `cached attachment ${buf.length} bytes → ${localPath}`,
     );
     return localPath;
+  }
+}
+
+function buttonStyleToEnum(s: "primary" | "danger" | "secondary"): ButtonStyle {
+  switch (s) {
+    case "primary": return ButtonStyle.Primary;
+    case "danger":  return ButtonStyle.Danger;
+    default:        return ButtonStyle.Secondary;
   }
 }

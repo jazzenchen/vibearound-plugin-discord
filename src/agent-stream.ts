@@ -9,6 +9,7 @@
 import {
   BlockRenderer,
   type BlockKind,
+  type RequestPermissionRequest,
   type VerboseConfig,
 } from "@vibearound/plugin-channel-sdk";
 import type { DiscordBot } from "./bot.js";
@@ -28,6 +29,29 @@ export class AgentStreamHandler extends BlockRenderer<string> {
     });
     this.discordBot = discordBot;
     this.log = log;
+  }
+
+  /** Render permission request as a button row. */
+  protected async onRequestPermission(
+    chatId: string,
+    request: RequestPermissionRequest,
+    callbackId: string,
+  ): Promise<void> {
+    const options = request.options ?? [];
+    const toolTitle =
+      (request.toolCall as { title?: string } | undefined)?.title ?? "the agent";
+
+    const buttons = options.map((opt) => ({
+      customId: `va_perm:${callbackId}:${opt.optionId}`,
+      label: opt.name,
+      style: discordButtonStyle(opt.kind),
+    }));
+
+    await this.discordBot.sendButtons(
+      chatId,
+      `🔐 Permission required — \`${toolTitle}\``,
+      buttons,
+    );
   }
 
   protected async sendText(chatId: string, text: string): Promise<void> {
@@ -55,5 +79,19 @@ export class AgentStreamHandler extends BlockRenderer<string> {
     } catch (e) {
       this.log("error", `editBlock failed: ${e}`);
     }
+  }
+}
+
+/** Map permission option kinds to Discord button styles. */
+function discordButtonStyle(kind: string): "primary" | "danger" | "secondary" {
+  switch (kind) {
+    case "allow_once":
+    case "allow_always":
+      return "primary";
+    case "reject_once":
+    case "reject_always":
+      return "danger";
+    default:
+      return "secondary";
   }
 }
