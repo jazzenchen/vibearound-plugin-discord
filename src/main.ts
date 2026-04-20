@@ -23,4 +23,11 @@ runChannelPlugin({
   },
   createRenderer: (bot, log, verbose) =>
     new AgentStreamHandler(bot, log, verbose),
+  // Heartbeat health check — gateway ws ready + latency under 10s. Discord
+  // keeps its own reconnect logic; we just confirm the socket's alive.
+  healthCheck: async (bot) => {
+    if (!bot.client.isReady()) return false;
+    const ping = bot.client.ws.ping ?? -1;
+    return ping >= 0 && ping < 10_000;
+  },
 });
